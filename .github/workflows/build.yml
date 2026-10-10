@@ -1,0 +1,155 @@
+---
+name: build
+
+on:
+  push:
+    branches:
+      - main
+      - "stable-*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Load versions
+        run: |
+          grep -E '^[A-Z_]+=' VERSION >> "$GITHUB_ENV"
+          echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+
+      - name: Build
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          pull: true
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            CADDY_IMAGE_TAG=${{ env.CADDY_IMAGE_TAG }}
+            CADDY_PLUGIN_TLSCONSUL=${{ env.CADDY_PLUGIN_TLSCONSUL }}
+            CADDY_PLUGIN_SECURITY=${{ env.CADDY_PLUGIN_SECURITY }}
+            CADDY_PLUGIN_DNS_INFOMANIAK=${{ env.CADDY_PLUGIN_DNS_INFOMANIAK }}
+          cache-from: type=gha,scope=${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_PAIR }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ github.event_name == 'pull_request' && 'caddy:test' || '' }}
+          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || '' }}
+
+      - name: Smoke test
+        env:
+          TEST_IMAGE: ${{ github.event_name == 'pull_request' && 'caddy:test' || format('{0}@{1}', env.IMAGE, steps.build.outputs.digest) }}
+        run: |
+          docker run --rm "$TEST_IMAGE" caddy version
+          modules=$(docker run --rm "$TEST_IMAGE" caddy list-modules)
+          for m in caddy.storage.consul security dns.providers.infomaniak; do
+            echo "$modules" | grep -qx "$m" || { echo "missing module: $m"; exit 1; }
+          done
+
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Load versions
+        run: |
+          grep -E '^[A-Z_]+=' VERSION >> "$GITHUB_ENV"
+          echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          source <(grep -E '^[A-Z_]+=' VERSION)
+          echo "CADDY_MINOR=$(echo "$CADDY_IMAGE_TAG" | cut -d. -f1-2)" >> "$GITHUB_ENV"
+          echo "CADDY_MAJOR=$(echo "$CADDY_IMAGE_TAG" | cut -d. -f1)" >> "$GITHUB_ENV"
+
+      - name: Download digests
+        uses: actions/download-artifact@v5
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ env.CADDY_IMAGE_TAG }}-${{ env.IMAGE_REVISION }}
+            type=raw,value=${{ env.CADDY_MINOR }}
+            type=raw,value=${{ env.CADDY_MAJOR }}
+            type=raw,value=latest
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Inspect image
+        run: docker buildx imagetools inspect "${IMAGE}:${CADDY_IMAGE_TAG}-${IMAGE_REVISION}"
