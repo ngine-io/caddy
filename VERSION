@@ -1,6 +1,6 @@
 # https://hub.docker.com/_/caddy
 # renovate: datasource=docker depName=caddy
-CADDY_IMAGE_TAG=2.10.0
+CADDY_IMAGE_TAG=2.11.7
 
 # https://github.com/pteich/caddy-tlsconsul
 # renovate: datasource=github-tags depName=pteich/caddy-tlsconsul
@@ -8,7 +8,7 @@ CADDY_PLUGIN_TLSCONSUL=v1.5.0
 
 # https://github.com/greenpau/caddy-security
 # renovate: datasource=github-tags depName=greenpau/caddy-security
-CADDY_PLUGIN_SECURITY=v1.1.31
+CADDY_PLUGIN_SECURITY=v1.4.1
 
 # https://github.com/caddy-dns/infomaniak
 # renovate: datasource=github-tags depName=caddy-dns/infomaniak
