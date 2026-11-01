@@ -8,7 +8,7 @@ CADDY_PLUGIN_TLSCONSUL=v1.5.0
 
 # https://github.com/greenpau/caddy-security
 # renovate: datasource=github-tags depName=greenpau/caddy-security
-CADDY_PLUGIN_SECURITY=v1.4.1
+CADDY_PLUGIN_SECURITY=v1.6.2
 
 # https://github.com/caddy-dns/infomaniak
 # renovate: datasource=github-tags depName=caddy-dns/infomaniak
