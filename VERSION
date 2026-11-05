@@ -1,6 +1,6 @@
 # https://hub.docker.com/_/caddy
 # renovate: datasource=docker depName=caddy
-CADDY_IMAGE_TAG=2.11.7
+CADDY_IMAGE_TAG=2.11.8
 
 # https://github.com/pteich/caddy-tlsconsul
 # renovate: datasource=github-tags depName=pteich/caddy-tlsconsul
